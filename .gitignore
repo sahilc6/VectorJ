@@ -1,0 +1,54 @@
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+hs_err_pid*
+
+# Spring Boot
+*.pid
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.user
+.project
+.classpath
+.settings/
+.factorypath
+*.swp
+*~
+
+# Node / React
+node_modules/
+dist/
+.cache/
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Data files (generated at runtime)
+vectors.json
+documents.json
+
+# Build output
+build/
+bin/
+out/
+
+# Secrets and Configs
+application.properties
+application-*.properties
+application.yml
+application-*.yml
+.env
+.env.*
+!.env.example
