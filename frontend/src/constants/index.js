@@ -5,6 +5,22 @@ export const COL = {
   sports: '#a6e3a1', doc: '#94e2d5', default: '#7f849c'
 };
 
+/* 12 visually distinct colors for document-level PCA coloring (Catppuccin Mocha) */
+export const DOC_PALETTE = [
+  '#89b4fa', /* blue    */
+  '#cba6f7', /* mauve   */
+  '#fab387', /* peach   */
+  '#a6e3a1', /* green   */
+  '#94e2d5', /* teal    */
+  '#f38ba8', /* red     */
+  '#f9e2af', /* yellow  */
+  '#74c7ec', /* sapphire*/
+  '#eba0ac', /* maroon  */
+  '#b4befe', /* lavender*/
+  '#f2cdcd', /* flamingo*/
+  '#89dceb', /* sky     */
+];
+
 export const DIM_COL = [
   '#89b4fa','#89b4fa','#89b4fa','#89b4fa',
   '#cba6f7','#cba6f7','#cba6f7','#cba6f7',

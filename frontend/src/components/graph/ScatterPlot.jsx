@@ -1,18 +1,18 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { useApp } from '../../contexts/AppContext';
-import { COL } from '../../constants';
 import { hexToRgba } from '../../utils/colors';
 
 export default function ScatterPlot() {
-  const { allItems, pcaPoints, hitIds, queryPt, bounds, setHoverItem } = useApp();
+  const {
+    docGroups, expandedDoc, setExpandedDoc,
+    hitIds, queryPt, bounds, setHoverItem,
+  } = useApp();
+
   const canvasRef = useRef(null);
   const animRef = useRef(null);
   const mouseRef = useRef({ x: 0, y: 0 });
 
-  const catColor = (c) => COL[c] || COL.default;
-
   useEffect(() => {
-
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -26,9 +26,7 @@ export default function ScatterPlot() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    const resizeObserver = new ResizeObserver(() => {
-      resize();
-    });
+    const resizeObserver = new ResizeObserver(() => resize());
     resizeObserver.observe(canvas);
 
     function draw() {
@@ -47,14 +45,8 @@ export default function ScatterPlot() {
       for (let i = 0; i <= 8; i++) {
         const tx = 70 + (i / 8) * (W - 140);
         const ty = 70 + (i / 8) * (H - 140);
-        ctx.beginPath();
-        ctx.moveTo(tx, 70);
-        ctx.lineTo(tx, H - 70);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(70, ty);
-        ctx.lineTo(W - 70, ty);
-        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(tx, 70); ctx.lineTo(tx, H - 70); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(70, ty); ctx.lineTo(W - 70, ty); ctx.stroke();
       }
 
       /* axis labels */
@@ -71,9 +63,9 @@ export default function ScatterPlot() {
       ctx.fillStyle = "#7f849c";
       ctx.font = '11px "JetBrains Mono", monospace';
       ctx.textAlign = "left";
-      ctx.fillText("2D PCA PROJECTION · SEMANTIC SPACE", 80, 30);
+      ctx.fillText("2D PCA PROJECTION · DOCUMENT CLUSTERS", 80, 30);
 
-      if (!allItems.length || !pcaPoints.length) {
+      if (!docGroups.length) {
         ctx.fillStyle = "#585b70";
         ctx.font = '12px "JetBrains Mono", monospace';
         ctx.textAlign = "center";
@@ -83,6 +75,7 @@ export default function ScatterPlot() {
         return;
       }
 
+      /* bounds with query expansion */
       let { minX, maxX, minY, maxY } = bounds;
       if (queryPt) {
         minX = Math.min(minX, queryPt[0] - 0.2);
@@ -91,8 +84,8 @@ export default function ScatterPlot() {
         maxY = Math.max(maxY, queryPt[1] + 0.2);
       }
 
+      const P = 70;
       const w2c = (wx, wy) => {
-        const P = 70;
         const rx = maxX - minX || 1;
         const ry = maxY - minY || 1;
         return [
@@ -101,99 +94,195 @@ export default function ScatterPlot() {
         ];
       };
 
-      /* dashed lines with arrows from query to hits */
+      /* ─── Draw dashed lines from query to hit documents ─── */
       if (queryPt && hitIds.size > 0) {
         const [qx, qy] = w2c(queryPt[0], queryPt[1]);
-        allItems.forEach((it, i) => {
-          if (hitIds.has(it.id) && pcaPoints[i]) {
-            const [px, py] = w2c(pcaPoints[i][0], pcaPoints[i][1]);
-            ctx.strokeStyle = "rgba(205,214,244,0.15)";
-            ctx.lineWidth = 1;
-            ctx.setLineDash([3, 3]);
-            ctx.beginPath();
-            ctx.moveTo(qx, qy);
-            ctx.lineTo(px, py);
-            ctx.stroke();
-            ctx.setLineDash([]);
+        for (const g of docGroups) {
+          const hasHit = [...g.chunkIds].some((id) => hitIds.has(id));
+          if (!hasHit) continue;
 
-            const angle = Math.atan2(py - qy, px - qx);
-            const rOffset = 12; // shift back to avoid being drawn under the hit circle
-            const tipX = px - rOffset * Math.cos(angle);
-            const tipY = py - rOffset * Math.sin(angle);
-            const headlen = 10;
-            ctx.beginPath();
-            ctx.moveTo(tipX, tipY);
-            ctx.lineTo(
-              tipX - headlen * Math.cos(angle - Math.PI / 6),
-              tipY - headlen * Math.sin(angle - Math.PI / 6),
-            );
-            ctx.moveTo(tipX, tipY);
-            ctx.lineTo(
-              tipX - headlen * Math.cos(angle + Math.PI / 6),
-              tipY - headlen * Math.sin(angle + Math.PI / 6),
-            );
-            ctx.strokeStyle = "rgba(205,214,244,0.8)";
-            ctx.lineWidth = 1.8;
-            ctx.stroke();
+          if (expandedDoc === g.docName) {
+            /* Draw lines to individual hit chunks */
+            g.chunkPts.forEach((cp, ci) => {
+              const chunkId = g.chunks[ci]?.id;
+              if (!hitIds.has(chunkId)) return;
+              const [px, py] = w2c(cp[0], cp[1]);
+              drawDashedArrow(ctx, qx, qy, px, py);
+            });
+          } else {
+            /* Draw line to centroid */
+            const [cx, cy] = w2c(g.centroidPt[0], g.centroidPt[1]);
+            drawDashedArrow(ctx, qx, qy, cx, cy);
           }
-        });
+        }
       }
 
-      /* track hover */
-      let hoveredIdx = -1;
-      let bestD = 18;
-      const mx = mouseRef.current.x,
-        my = mouseRef.current.y;
+      /* ─── Hover detection ─── */
+      const mx = mouseRef.current.x, my = mouseRef.current.y;
+      let hoveredGroup = null;
+      let hoveredChunkIdx = -1;
+      let bestD = 22;
 
-      allItems.forEach((it, i) => {
-        if (!pcaPoints[i]) return;
-        const [cx, cy] = w2c(pcaPoints[i][0], pcaPoints[i][1]);
+      for (const g of docGroups) {
+        if (expandedDoc === g.docName) {
+          /* Check individual chunks */
+          g.chunkPts.forEach((cp, ci) => {
+            const [cx, cy] = w2c(cp[0], cp[1]);
+            const d = Math.hypot(mx - cx, my - cy);
+            if (d < bestD) {
+              bestD = d;
+              hoveredGroup = g;
+              hoveredChunkIdx = ci;
+            }
+          });
+        }
+        /* Always check centroid */
+        const [cx, cy] = w2c(g.centroidPt[0], g.centroidPt[1]);
         const d = Math.hypot(mx - cx, my - cy);
         if (d < bestD) {
           bestD = d;
-          hoveredIdx = i;
+          hoveredGroup = g;
+          hoveredChunkIdx = -1; // hovering centroid, not a chunk
         }
-      });
+      }
 
-      /* draw points */
-      allItems.forEach((it, i) => {
-        if (!pcaPoints[i]) return;
-        const [cx, cy] = w2c(pcaPoints[i][0], pcaPoints[i][1]);
-        const isHit = hitIds.has(it.id);
-        const r = isHit ? 7 : 5.5;
-        const col = catColor(it.category);
+      /* ─── Draw document groups ─── */
+      for (const g of docGroups) {
+        const [cx, cy] = w2c(g.centroidPt[0], g.centroidPt[1]);
+        const col = g.color;
+        const isExpanded = expandedDoc === g.docName;
+        const hasHit = [...g.chunkIds].some((id) => hitIds.has(id));
+        const isHoveredGroup = hoveredGroup === g && hoveredChunkIdx === -1;
 
-        /* pulse ring on hits */
-        if (isHit) {
-          const pr = r + 6 + Math.sin(pulse) * 1.5;
+        if (isExpanded) {
+          /* ─── EXPANDED: Show centroid + individual chunks ─── */
+
+          /* Draw thin lines from centroid to each chunk */
+          ctx.strokeStyle = hexToRgba(col, 0.2);
+          ctx.lineWidth = 1;
+          for (const cp of g.chunkPts) {
+            const [px, py] = w2c(cp[0], cp[1]);
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(px, py);
+            ctx.stroke();
+          }
+
+          /* Draw chunk dots */
+          g.chunkPts.forEach((cp, ci) => {
+            const [px, py] = w2c(cp[0], cp[1]);
+            const chunkId = g.chunks[ci]?.id;
+            const isChunkHit = hitIds.has(chunkId);
+            const isChunkHovered = hoveredGroup === g && hoveredChunkIdx === ci;
+            const r = isChunkHit ? 5 : 3.5;
+
+            /* Hit pulse */
+            if (isChunkHit) {
+              const pr = r + 5 + Math.sin(pulse) * 1.5;
+              ctx.beginPath();
+              ctx.arc(px, py, pr, 0, Math.PI * 2);
+              ctx.strokeStyle = hexToRgba(col, 0.4);
+              ctx.lineWidth = 1.2;
+              ctx.stroke();
+            }
+
+            /* Chunk dot */
+            ctx.beginPath();
+            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.fillStyle = hexToRgba(col, isChunkHit ? 1 : 0.6);
+            ctx.fill();
+
+            /* Chunk hover ring */
+            if (isChunkHovered) {
+              ctx.beginPath();
+              ctx.arc(px, py, r + 4, 0, Math.PI * 2);
+              ctx.strokeStyle = col;
+              ctx.lineWidth = 1.3;
+              ctx.stroke();
+            }
+
+            /* Chunk label */
+            ctx.fillStyle = hexToRgba(col, 0.5);
+            ctx.font = '8px "JetBrains Mono", monospace';
+            ctx.textAlign = "center";
+            ctx.fillText(`${ci + 1}`, px, py - r - 3);
+          });
+
+          /* Dimmed centroid anchor */
           ctx.beginPath();
-          ctx.arc(cx, cy, pr, 0, Math.PI * 2);
-          ctx.strokeStyle = hexToRgba(col, 0.4);
-          ctx.lineWidth = 1.2;
+          ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+          ctx.fillStyle = hexToRgba(col, 0.25);
+          ctx.fill();
+          ctx.strokeStyle = hexToRgba(col, 0.5);
+          ctx.lineWidth = 1.5;
           ctx.stroke();
-        }
 
-        /* dot */
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fillStyle = col;
-        ctx.fill();
+          /* "collapse" icon in center */
+          ctx.fillStyle = hexToRgba(col, 0.6);
+          ctx.font = '8px "JetBrains Mono", monospace';
+          ctx.textAlign = "center";
+          ctx.fillText("−", cx, cy + 3);
+        } else {
+          /* ─── COLLAPSED: Show centroid only ─── */
+          const baseR = 10;
+          const r = baseR + Math.min(g.chunks.length, 10) * 0.3;
 
-        /* hovered */
-        if (hoveredIdx === i) {
+          /* Hit pulse ring */
+          if (hasHit) {
+            const pr = r + 6 + Math.sin(pulse) * 1.5;
+            ctx.beginPath();
+            ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+            ctx.strokeStyle = hexToRgba(col, 0.4);
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
+
+          /* Main dot */
           ctx.beginPath();
-          ctx.arc(cx, cy, r + 4, 0, Math.PI * 2);
-          ctx.strokeStyle = col;
-          ctx.lineWidth = 1.3;
-          ctx.stroke();
-        }
-      });
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.fillStyle = col;
+          ctx.fill();
 
-      /* query crosshair */
+          /* Inner glow */
+          ctx.beginPath();
+          ctx.arc(cx, cy, r * 0.55, 0, Math.PI * 2);
+          ctx.fillStyle = hexToRgba("#1e1e2e", 0.35);
+          ctx.fill();
+
+          /* Chunk count in center */
+          ctx.fillStyle = "#cdd6f4";
+          ctx.font = 'bold 9px "JetBrains Mono", monospace';
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(g.chunks.length), cx, cy);
+          ctx.textBaseline = "alphabetic";
+
+          /* Hover ring */
+          if (isHoveredGroup) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + 5, 0, Math.PI * 2);
+            ctx.strokeStyle = col;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
+
+          /* Document name label below */
+          const label = g.docName.length > 20
+            ? g.docName.slice(0, 18) + "…"
+            : g.docName;
+          ctx.fillStyle = hexToRgba(col, 0.7);
+          ctx.font = '9px "JetBrains Mono", monospace';
+          ctx.textAlign = "center";
+          ctx.fillText(label, cx, cy + r + 14);
+        }
+      }
+
+      /* ─── Query crosshair ─── */
       if (queryPt) {
         const [qx, qy] = w2c(queryPt[0], queryPt[1]);
         ctx.save();
         ctx.translate(qx, qy);
+
         ctx.beginPath();
         ctx.arc(0, 0, 11, 0, Math.PI * 2);
         ctx.strokeStyle = "rgba(137,180,250,.45)";
@@ -201,14 +290,10 @@ export default function ScatterPlot() {
         ctx.stroke();
 
         ctx.beginPath();
-        ctx.moveTo(-16, 0);
-        ctx.lineTo(-13, 0);
-        ctx.moveTo(13, 0);
-        ctx.lineTo(16, 0);
-        ctx.moveTo(0, -16);
-        ctx.lineTo(0, -13);
-        ctx.moveTo(0, 13);
-        ctx.lineTo(0, 16);
+        ctx.moveTo(-16, 0); ctx.lineTo(-13, 0);
+        ctx.moveTo(13, 0); ctx.lineTo(16, 0);
+        ctx.moveTo(0, -16); ctx.lineTo(0, -13);
+        ctx.moveTo(0, 13); ctx.lineTo(0, 16);
         ctx.strokeStyle = "#89b4fa";
         ctx.lineWidth = 1.2;
         ctx.stroke();
@@ -225,8 +310,28 @@ export default function ScatterPlot() {
         ctx.fillText("query", qx + 18, qy + 4);
       }
 
-      if (hoveredIdx >= 0) {
-        setHoverItem(allItems[hoveredIdx]);
+      /* ─── Set hover item for Tooltip ─── */
+      if (hoveredGroup) {
+        if (hoveredChunkIdx >= 0) {
+          const chunk = hoveredGroup.chunks[hoveredChunkIdx];
+          setHoverItem({
+            type: "chunk",
+            docName: hoveredGroup.docName,
+            color: hoveredGroup.color,
+            chunkIndex: hoveredChunkIdx + 1,
+            totalChunks: hoveredGroup.chunks.length,
+            title: chunk.title,
+            text: chunk.text?.slice(0, 100) || "",
+          });
+        } else {
+          setHoverItem({
+            type: "document",
+            docName: hoveredGroup.docName,
+            color: hoveredGroup.color,
+            chunkCount: hoveredGroup.chunks.length,
+            isExpanded: expandedDoc === hoveredGroup.docName,
+          });
+        }
       } else {
         setHoverItem(null);
       }
@@ -239,29 +344,93 @@ export default function ScatterPlot() {
       resizeObserver.disconnect();
       if (animRef.current) cancelAnimationFrame(animRef.current);
     };
-  }, [allItems, pcaPoints, hitIds, queryPt, bounds, setHoverItem]);
+  }, [docGroups, expandedDoc, hitIds, queryPt, bounds, setHoverItem]);
 
-  /* ─── Mouse tracking on canvas ─── */
+  /* ─── Mouse tracking ─── */
   const handleCanvasMouseMove = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     mouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    // Tooltip position dispatch is now handled globally via mousemove on document or specific wrapper
-    // We will just let the global tooltip listen to window mousemove or manage its own tracking.
-    // Wait, the tooltip tracking in original App.jsx relies on tipRef.
-    // To decouple, we dispatch a custom event or let the Tooltip track mouse.
-    // Easiest is to fire a custom event that Tooltip component listens to, or update an internal ref.
     const customEvent = new CustomEvent('canvas-mousemove', {
       detail: { clientX: e.clientX, clientY: e.clientY }
     });
     window.dispatchEvent(customEvent);
   }, []);
 
+  /* ─── Click to expand/collapse ─── */
+  const handleCanvasClick = useCallback((e) => {
+    if (!docGroups.length) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const W = canvasRef.current.width / (window.devicePixelRatio || 1);
+    const H = canvasRef.current.height / (window.devicePixelRatio || 1);
+    let { minX, maxX, minY, maxY } = bounds;
+    if (queryPt) {
+      minX = Math.min(minX, queryPt[0] - 0.2);
+      maxX = Math.max(maxX, queryPt[0] + 0.2);
+      minY = Math.min(minY, queryPt[1] - 0.2);
+      maxY = Math.max(maxY, queryPt[1] + 0.2);
+    }
+    const P = 70;
+    const w2c = (wx, wy) => {
+      const rx = maxX - minX || 1;
+      const ry = maxY - minY || 1;
+      return [
+        P + ((wx - minX) / rx) * (W - 2 * P),
+        H - P - ((wy - minY) / ry) * (H - 2 * P),
+      ];
+    };
+
+    for (const g of docGroups) {
+      const [cx, cy] = w2c(g.centroidPt[0], g.centroidPt[1]);
+      const d = Math.hypot(mx - cx, my - cy);
+      if (d < 22) {
+        setExpandedDoc((prev) => prev === g.docName ? null : g.docName);
+        return;
+      }
+    }
+  }, [docGroups, bounds, queryPt, setExpandedDoc]);
+
   return (
     <canvas
       ref={canvasRef}
-      style={{ width: "100%", height: "100%", display: "block" }}
+      style={{ width: "100%", height: "100%", display: "block", cursor: "pointer" }}
       onMouseMove={handleCanvasMouseMove}
       onMouseLeave={() => setHoverItem(null)}
+      onClick={handleCanvasClick}
     />
   );
+}
+
+/* ─── Helper: draw a dashed arrow between two points ─── */
+function drawDashedArrow(ctx, x1, y1, x2, y2) {
+  ctx.strokeStyle = "rgba(205,214,244,0.15)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const rOffset = 12;
+  const tipX = x2 - rOffset * Math.cos(angle);
+  const tipY = y2 - rOffset * Math.sin(angle);
+  const headlen = 10;
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(
+    tipX - headlen * Math.cos(angle - Math.PI / 6),
+    tipY - headlen * Math.sin(angle - Math.PI / 6),
+  );
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(
+    tipX - headlen * Math.cos(angle + Math.PI / 6),
+    tipY - headlen * Math.sin(angle + Math.PI / 6),
+  );
+  ctx.strokeStyle = "rgba(205,214,244,0.8)";
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
 }

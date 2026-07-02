@@ -61,3 +61,41 @@ export function projectPCA(emb, model) {
   }
   return [sum1, sum2];
 }
+
+/**
+ * Groups doc-chunks by their parent document name.
+ * Titles like "My Paper (Part 3)" → base name "My Paper".
+ * Returns an array of { docName, chunks, centroidEmb }.
+ */
+export function groupChunksByDocument(items) {
+  const map = new Map();
+  for (const it of items) {
+    const base = (it.title || it.metadata || "")
+      .replace(/\s*\(Part\s+\d+\)\s*$/i, "")
+      .trim() || "Untitled";
+    if (!map.has(base)) map.set(base, []);
+    map.get(base).push(it);
+  }
+  const groups = [];
+  for (const [docName, chunks] of map) {
+    // Compute centroid embedding (average of all chunk embeddings)
+    const dim = chunks[0]?.embedding?.length || 0;
+    const centroidEmb = new Array(dim).fill(0);
+    let validCount = 0;
+    for (const c of chunks) {
+      if (!c.embedding) continue;
+      validCount++;
+      for (let i = 0; i < dim; i++) centroidEmb[i] += c.embedding[i];
+    }
+    if (validCount > 0) {
+      for (let i = 0; i < dim; i++) centroidEmb[i] /= validCount;
+    }
+    groups.push({
+      docName,
+      chunks,
+      chunkIds: new Set(chunks.map((c) => c.id)),
+      centroidEmb,
+    });
+  }
+  return groups;
+}

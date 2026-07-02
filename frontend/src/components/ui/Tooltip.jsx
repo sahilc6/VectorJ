@@ -1,12 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { useApp } from '../../contexts/AppContext';
-import { COL } from '../../constants';
 
 export default function Tooltip() {
   const { hoverItem } = useApp();
   const tipRef = useRef(null);
-
-  const catColor = (c) => COL[c] || COL.default;
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -22,19 +19,64 @@ export default function Tooltip() {
     };
   }, []);
 
+  const renderContent = () => {
+    if (!hoverItem) return null;
+
+    if (hoverItem.type === "document") {
+      return (
+        <>
+          <span style={{ color: hoverItem.color, fontWeight: 600 }}>
+            {hoverItem.docName}
+          </span>
+          <span style={{ color: "#7f849c", marginLeft: 6 }}>
+            {hoverItem.chunkCount} chunk{hoverItem.chunkCount !== 1 ? "s" : ""}
+          </span>
+          <br />
+          <span style={{ color: "#585b70", fontSize: 9 }}>
+            {hoverItem.isExpanded ? "click to collapse" : "click to expand chunks"}
+          </span>
+        </>
+      );
+    }
+
+    if (hoverItem.type === "chunk") {
+      return (
+        <>
+          <span style={{ color: hoverItem.color, fontWeight: 600 }}>
+            {hoverItem.docName}
+          </span>
+          <span style={{ color: "#7f849c", marginLeft: 6 }}>
+            chunk {hoverItem.chunkIndex}/{hoverItem.totalChunks}
+          </span>
+          {hoverItem.text && (
+            <>
+              <br />
+              <span style={{ color: "#a6adc8", fontSize: 9 }}>
+                {hoverItem.text.length > 80
+                  ? hoverItem.text.slice(0, 78) + "…"
+                  : hoverItem.text}
+              </span>
+            </>
+          )}
+        </>
+      );
+    }
+
+    /* Legacy fallback for vector items */
+    return (
+      <>
+        <span style={{ color: hoverItem.color || "#94e2d5", fontWeight: 600 }}>
+          {hoverItem.category || "doc"}
+        </span>
+        {" · "}
+        <span>{hoverItem.metadata || hoverItem.title}</span>
+      </>
+    );
+  };
+
   return (
     <div ref={tipRef} className={`tip ${hoverItem ? "visible" : ""}`}>
-      {hoverItem && (
-        <>
-          <span
-            style={{ color: catColor(hoverItem.category), fontWeight: 600 }}
-          >
-            {hoverItem.category}
-          </span>
-          {" · "}
-          <span>{hoverItem.metadata || hoverItem.title}</span>
-        </>
-      )}
+      {renderContent()}
     </div>
   );
 }

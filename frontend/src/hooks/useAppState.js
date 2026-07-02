@@ -14,7 +14,8 @@ import {
   askAI,
   searchDocuments,
 } from "../services/api";
-import { textToEmbedding, pca2D, projectPCA } from "../utils";
+import { textToEmbedding, pca2D, projectPCA, groupChunksByDocument } from "../utils";
+import { DOC_PALETTE } from "../constants";
 
 export function useAppState() {
   /* ─── State ─── */
@@ -23,7 +24,6 @@ export function useAppState() {
   const [pcaModel, setPcaModel] = useState(null);
   const [hitIds, setHitIds] = useState(new Set());
   const [queryPt, setQueryPt] = useState(null);
-  const [docPcaPoints, setDocPcaPoints] = useState([]);
   const [bounds, setBounds] = useState({
     minX: -1,
     maxX: 1,
@@ -58,12 +58,15 @@ export function useAppState() {
   const [totalVectors, setTotalVectors] = useState(0);
   const [dimensions, setDimensions] = useState(0);
   const [searching, setSearching] = useState(false);
+  const [docGroups, setDocGroups] = useState([]);
+  const [expandedDoc, setExpandedDoc] = useState(null);
 
   /* ─── Helpers ─── */
   const recomputePCA = useCallback((items) => {
     if (items.length < 2) {
       setPcaPoints([]);
       setPcaModel(null);
+      setDocGroups([]);
       return;
     }
     const embs = items.map((it) => it.embedding);
@@ -71,19 +74,45 @@ export function useAppState() {
     setPcaPoints(pts);
     setPcaModel(model);
 
+    /* Compute document groups with centroid PCA points */
+    const groups = groupChunksByDocument(items);
+    const enrichedGroups = groups.map((g, gi) => {
+      const centroidPt = projectPCA(g.centroidEmb, model);
+      /* Map chunk indices into the allItems array for PCA lookup */
+      const chunkIndices = g.chunks.map((c) => items.indexOf(c));
+      const chunkPts = chunkIndices.map((idx) => pts[idx] || [0, 0]);
+      return {
+        ...g,
+        centroidPt,
+        chunkPts,
+        chunkIndices,
+        color: DOC_PALETTE[gi % DOC_PALETTE.length],
+      };
+    });
+    setDocGroups(enrichedGroups);
+
+    /* Compute bounds from centroids (tighter, less clutter) */
     let x0 = Infinity,
       x1 = -Infinity,
       y0 = Infinity,
       y1 = -Infinity;
+    for (const g of enrichedGroups) {
+      const [gx, gy] = g.centroidPt;
+      x0 = Math.min(x0, gx);
+      x1 = Math.max(x1, gx);
+      y0 = Math.min(y0, gy);
+      y1 = Math.max(y1, gy);
+    }
+    /* Also include chunk points in bounds for expanded view */
     for (const [px, py] of pts) {
       x0 = Math.min(x0, px);
       x1 = Math.max(x1, px);
       y0 = Math.min(y0, py);
       y1 = Math.max(y1, py);
     }
-    const px = (x1 - x0) * 0.18 || 0.1;
-    const py = (y1 - y0) * 0.18 || 0.1;
-    setBounds({ minX: x0 - px, maxX: x1 + px, minY: y0 - py, maxY: y1 + py });
+    const padX = (x1 - x0) * 0.18 || 0.1;
+    const padY = (y1 - y0) * 0.18 || 0.1;
+    setBounds({ minX: x0 - padX, maxX: x1 + padX, minY: y0 - padY, maxY: y1 + padY });
   }, []);
 
   /* ─── Load data on mount ─── */
@@ -237,15 +266,6 @@ export function useAppState() {
     }
   }, [activeTab]);
 
-  /* ─── Documents: compute PCA when docList or pcaModel changes ─── */
-  useEffect(() => {
-    if (pcaModel && docList.length > 0) {
-      setDocPcaPoints(docList.map(d => projectPCA(d.embedding, pcaModel)));
-    } else {
-      setDocPcaPoints([]);
-    }
-  }, [docList, pcaModel]);
-
   /* ─── Documents: delete ─── */
   const handleDeleteDoc = useCallback(async (id) => {
     try {
@@ -316,8 +336,9 @@ export function useAppState() {
   return {
     allItems, setAllItems,
     pcaPoints, setPcaPoints,
-    docPcaPoints,
     pcaModel, setPcaModel,
+    docGroups,
+    expandedDoc, setExpandedDoc,
     hitIds, setHitIds,
     queryPt, setQueryPt,
     bounds, setBounds,
