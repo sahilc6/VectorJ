@@ -43,6 +43,7 @@ documents.json
 build/
 bin/
 out/
+backend/src/main/resources/static/
 
 # Secrets and Configs
 application.properties

@@ -74,7 +74,8 @@ public class DocumentController {
 
         // Construct Context for prompt
         StringBuilder contextBuilder = new StringBuilder();
-        List<Map<String, String>> contexts = new ArrayList<>();
+        List<Map<String, Object>> contexts = new ArrayList<>();
+        List<Integer> hitIds = new ArrayList<>();
 
         for (int i = 0; i < hits.size(); i++) {
             DocItem item = hits.get(i).getItem();
@@ -83,8 +84,10 @@ public class DocumentController {
                     .append("Content: ").append(item.getText()).append("\n\n");
 
             contexts.add(Map.of(
+                    "id", item.getId(),
                     "title", item.getTitle(),
                     "text", item.getText()));
+            hitIds.add(item.getId());
         }
 
         String prompt = "You are a helpful AI assistant. Use the provided context blocks to answer the user's question if they are relevant. "
@@ -100,7 +103,9 @@ public class DocumentController {
 
         return Map.of(
                 "answer", answer,
-                "contexts", contexts);
+                "contexts", contexts,
+                "queryEmbedding", queryEmb,
+                "hitIds", hitIds);
     }
 
 }
